@@ -7,7 +7,7 @@ node_js:
 
 env:
   matrix:
-  - PATH=$HOME/purescript:$PATH
+  - PATH=$HOME:$HOME/purescript:$PATH
 
 install:
 - PURS_VER=v0.13.2
