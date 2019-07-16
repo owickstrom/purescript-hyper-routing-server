@@ -25,6 +25,6 @@
   },
   "resolutions": {
     "purescript-spec": "^4.0.0",
-    "purescript-typelevel-prelude": ">= 4.0.0 < 6.0.0"
+    "purescript-typelevel-prelude": "^5.0.0"
   }
 }
