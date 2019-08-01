@@ -8,7 +8,7 @@ let overrides =
       { trout =
             upstream.trout
          // { repo = "https://github.com/nsaunders/purescript-trout.git"
-            , version = "7750a60d82a0a24ef9e4c908b3f68443361a0f74"
+            , version = "b18b2139df19a3df7be9638595adf0e469149a4e"
             }
       }
 
