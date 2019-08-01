@@ -29,13 +29,13 @@ import Foreign.Object (lookup) as F
 import Hyper.Conn (Conn)
 import Hyper.ContentNegotiation (AcceptHeader, NegotiationResult(..), negotiateContent, parseAcceptHeader)
 import Hyper.Middleware (Middleware, lift')
-import Hyper.Request (class Request, getRequestData)
+import Hyper.Request (class ReadableBody, class Request, getRequestData, readBody)
 import Hyper.Response (class Response, class ResponseWritable, ResponseEnded, StatusLineOpen, closeHeaders, contentType, end, respond, writeStatus)
 import Hyper.Status (Status, statusBadRequest, statusMethodNotAllowed, statusNotAcceptable, statusNotFound, statusOK)
 import Prim.Row (class Cons)
 import Type.Proxy (Proxy(..))
-import Type.Trout (type (:<|>), type (:=), type (:>), Capture, CaptureAll, QueryParam, QueryParams, Lit, Raw)
-import Type.Trout.ContentType (class AllMimeRender, allMimeRender)
+import Type.Trout (type (:<|>), type (:=), type (:>), Capture, CaptureAll, QueryParam, QueryParams, ReqBody, Lit, Raw)
+import Type.Trout.ContentType (class AllMimeRender, class MimeParse, allMimeRender, mimeParse)
 import Type.Trout.PathPiece (class FromPathPiece, fromPathPiece)
 
 type Method' = Either Method CustomMethod
@@ -43,6 +43,7 @@ type Method' = Either Method CustomMethod
 type RoutingContext = { path :: Array String
                       , query :: Array (Tuple String (Maybe String))
                       , method :: Method'
+                      , requestBody :: String
                       }
 
 data RoutingError
@@ -178,6 +179,18 @@ instance routerQueryParams :: ( IsSymbol k
                                         , message: Just err
                                         })
     where go = route (Proxy :: Proxy e) ctx <<< r
+
+
+instance routerReqBody :: ( Router e h out
+                          , MimeParse String ct r
+                          )
+                          => Router (ReqBody r ct :> e) (r -> h) out where
+  route _ ctx r =
+    case mimeParse (Proxy :: Proxy ct) ctx.requestBody of
+      Right body -> route (Proxy :: Proxy e) ctx (r body)
+      Left err -> throwError (HTTPError { status: statusBadRequest
+                                        , message: Just (err <> ": " <> ctx.requestBody)
+                                        })
 
 
 routeEndpoint :: forall e r method
@@ -317,6 +330,7 @@ router
   :: forall s r m req res c
    . Monad m
   => Request req m
+  => ReadableBody req m String
   => Router s r (Middleware
                  m
                  (Conn req (res StatusLineOpen) c)
@@ -343,11 +357,12 @@ router site handler onRoutingError = do
   -- Then, if successful, run the handler, possibly also generating an HTTPError.
   -- # either catch runHandler
   where
-    context { parsedUrl, method } =
+    context { parsedUrl, method } requestBody =
       let parsedUrl' = force parsedUrl in
       { path: parsedUrl'.path
       , query: either (const []) identity parsedUrl'.query
       , method: method
+      , requestBody: requestBody
       }
     catch (HTTPError { status, message }) =
       onRoutingError status message
@@ -358,7 +373,7 @@ router site handler onRoutingError = do
                (Conn req (res ResponseEnded) c)
                Unit
     handler' = do
-      ctx <- context <$> getRequestData
+      ctx <- context <$> getRequestData <*> readBody
       case route site ctx handler of
         Left err → catch err
         Right h → h
