@@ -189,7 +189,7 @@ instance routerReqBody :: ( Router e h out
     case mimeParse (Proxy :: Proxy ct) ctx.requestBody of
       Right body -> route (Proxy :: Proxy e) ctx (r body)
       Left err -> throwError (HTTPError { status: statusBadRequest
-                                        , message: Just (err <> ": " <> ctx.requestBody)
+                                        , message: Just err
                                         })
 
 
