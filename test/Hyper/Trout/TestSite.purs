@@ -1,17 +1,17 @@
 module Hyper.Trout.TestSite where
 
 import Prelude
-import Data.Argonaut (class EncodeJson, jsonEmptyObject, (:=), (~>))
+import Data.Argonaut (class DecodeJson, class EncodeJson, decodeJson, jsonEmptyObject, (.:), (:=), (~>))
 import Data.Either (Either(..))
 import Data.Maybe (Maybe)
 import Data.String (trim)
 import Text.Smolder.HTML (h1)
 import Text.Smolder.Markup (text)
 import Type.Proxy (Proxy(..))
-import Type.Trout (type (:/), type (:<|>), type (:=), type (:>), Capture, CaptureAll, Raw, Resource, QueryParam, QueryParams)
+import Type.Trout (type (:/), type (:<|>), type (:=), type (:>), Capture, CaptureAll, Raw, ReqBody, Resource, QueryParam, QueryParams)
 import Type.Trout.ContentType.HTML (HTML, class EncodeHTML)
 import Type.Trout.ContentType.JSON (JSON)
-import Type.Trout.Method (Get, Post)
+import Type.Trout.Method (Delete, Get, Post)
 import Type.Trout.PathPiece (class FromPathPiece, class ToPathPiece)
 
 data Home = Home
@@ -40,6 +40,12 @@ instance encodeUser :: EncodeJson User where
     "userId" := userId
     ~> jsonEmptyObject
 
+instance decodeUser :: DecodeJson User where
+  decodeJson json = do
+    obj <- decodeJson json
+    userId <- UserID <$> obj .: "userId"
+    pure $ User userId
+
 data WikiPage = WikiPage String
 
 instance encodeHTMLWikiPage :: EncodeHTML WikiPage where
@@ -47,7 +53,8 @@ instance encodeHTMLWikiPage :: EncodeHTML WikiPage where
 
 type UserResources =
   "profile" := "profile" :/ Resource (Get User JSON)
-  :<|> "friends" := "friends" :/ Resource (Get (Array User) JSON :<|> Post User JSON)
+  :<|> "friends" := "friends" :/ Resource (Get (Array User) JSON :<|> Delete (Array User) JSON)
+  :<|> "newFriend" := "friends" :/ ReqBody User JSON :> Resource (Post (Array User) JSON)
 
 type TestSite =
   "home" := Resource (Get Home (HTML :<|> JSON))
