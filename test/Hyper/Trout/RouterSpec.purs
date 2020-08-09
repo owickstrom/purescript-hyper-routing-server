@@ -3,7 +3,7 @@ module Hyper.Trout.RouterSpec (spec) where
 import Prelude
 import Control.Monad.Indexed ((:*>))
 import Data.Either (Either(..))
-import Data.HTTP.Method (Method(POST, GET))
+import Data.HTTP.Method (Method(POST, GET, DELETE))
 import Data.Maybe (Maybe(..), maybe)
 import Data.MediaType.Common (textPlain)
 import Data.String (joinWith)
@@ -32,14 +32,27 @@ friendsResource
    . Monad m
   => UserID
   -> { "GET" :: m (Array User)
-     , "POST" :: m User
+     , "DELETE" :: m (Array User)
      }
 friendsResource (UserID uid) =
   { "GET": pure [ User (UserID "foo")
                , User (UserID "bar")
                ]
-  -- TODO: add ReqBody when supported
-  , "POST": pure (User (UserID "new-user"))
+  , "DELETE": pure []
+  }
+
+newFriendResource
+  :: forall m
+   . Monad m
+  => UserID
+  -> User
+  -> { "POST" :: m (Array User)
+     }
+newFriendResource _ friend =
+  { "POST": pure [ User (UserID "foo")
+                 , User (UserID "bar")
+                 , friend
+                 ]
   }
 
 wikiResource :: forall m. Monad m => Array String -> {"GET" :: m WikiPage}
@@ -71,6 +84,7 @@ spec =
   describe "Hyper.Routing.Router" do
     let userResources userId = { profile: profileResource userId
                                , friends: friendsResource userId
+                               , newFriend: newFriendResource userId
                                }
         resources = { home: homeResource
                     , user: userResources
@@ -85,10 +99,11 @@ spec =
           :*> headers []
           :*> respond (maybe "" identity msg)
 
-        makeRequestWithHeaders method path headers =
+        makeRequest method path headers body =
           { request: TestRequest defaultRequest { method = Left method
                                                 , url = path
                                                 , headers = headers
+                                                , body = body
                                                 }
           , response: TestResponse Nothing [] []
           , components: {}
@@ -96,73 +111,83 @@ spec =
           # evalMiddleware (router testSite resources onRoutingError)
           # testServer
 
-        makeRequest method path =
-          makeRequestWithHeaders method path (F.empty :: Object String)
+        makeRequest' method path headers =
+          makeRequest method path headers ""
+
+        makeRequest'' method path =
+          makeRequest' method path (F.empty :: Object String)
 
     describe "router" do
       it "matches root" do
-        conn <- makeRequest GET "/"
+        conn <- makeRequest'' GET "/"
         testStringBody conn `shouldEqual` "<h1>Home</h1>"
 
       it "considers Accept header for multi-content-type resources" do
-        conn <- makeRequestWithHeaders GET "/" (F.singleton "accept" "application/json")
+        conn <- makeRequest' GET "/" (F.singleton "accept" "application/json")
         testStatus conn `shouldEqual` Just statusOK
         testStringBody conn `shouldEqual` "{}"
 
       it "validates based on custom Capture instance" do
-        conn <- makeRequest GET "/users/ /profile"
+        conn <- makeRequest'' GET "/users/ /profile"
         testStatus conn `shouldEqual` Just statusBadRequest
         testStringBody conn `shouldEqual` "UserID must not be blank."
 
       it "matches nested routes" do
-        conn <- makeRequest GET "/users/owi/profile"
+        conn <- makeRequest'' GET "/users/owi/profile"
         testStringBody conn `shouldEqual` "{\"userId\":\"owi\"}"
 
       it "ignores extraneous query string parameters" do
-        conn <- makeRequest GET "/users/owi/profile?bugs=bunny"
+        conn <- makeRequest'' GET "/users/owi/profile?bugs=bunny"
         testStringBody conn `shouldEqual` "{\"userId\":\"owi\"}"
 
       it "supports arrays of JSON values" do
-        conn <- makeRequest GET "/users/owi/friends"
+        conn <- makeRequest'' GET "/users/owi/friends"
         testStringBody conn `shouldEqual` "[{\"userId\":\"foo\"},{\"userId\":\"bar\"}]"
 
       it "supports second method of resource with different representation" do
-        conn <- makeRequest POST "/users/owi/friends"
-        testStringBody conn `shouldEqual` "{\"userId\":\"new-user\"}"
+        conn <- makeRequest'' DELETE "/users/owi/friends"
+        testStringBody conn `shouldEqual` "[]"
+
+      it "captures the request body" do
+        conn <- makeRequest
+                  POST "/users/owi/friends"
+                  (F.singleton "content-type" "application/json")
+                  "{\"userId\":\"nsa\"}"
+        testStringBody conn `shouldEqual` "[{\"userId\":\"foo\"},{\"userId\":\"bar\"},{\"userId\":\"nsa\"}]"
 
       it "matches CaptureAll route" do
-        conn <- makeRequest GET "/wiki/foo/bar/baz.txt"
+        conn <- makeRequest'' GET "/wiki/foo/bar/baz.txt"
         testStringBody conn `shouldEqual` "Viewing page: foo&#x2F;bar&#x2F;baz.txt"
 
       it "matches QueryParam route" do
-        conn <- makeRequest GET "/search?q=bunny"
+        conn <- makeRequest'' GET "/search?q=bunny"
         testStringBody conn `shouldEqual` "{\"userId\":\"bunny\"}"
 
       it "matches QueryParam route with empty value" do
-        conn <- makeRequest GET "/search?q"
+        conn <- makeRequest'' GET "/search?q"
         testStringBody conn `shouldEqual` "{\"userId\":\"\"}"
 
       it "matches QueryParam route with missing key" do
-        conn <- makeRequest GET "/search?r=bunny"
+        conn <- makeRequest'' GET "/search?r=bunny"
         testStringBody conn `shouldEqual` "null"
 
       it "matches QueryParams route" do
-        conn <- makeRequest GET "/search-many?q=bugs&q=bunny"
+        conn <- makeRequest'' GET "/search-many?q=bugs&q=bunny"
         testStringBody conn `shouldEqual` "[{\"userId\":\"bugs\"},{\"userId\":\"bunny\"}]"
 
       it "matches QueryParams route with empty value" do
-        conn <- makeRequest GET "/search-many?q&q=bunny"
+        conn <- makeRequest'' GET "/search-many?q&q=bunny"
         testStringBody conn `shouldEqual` "[{\"userId\":\"\"},{\"userId\":\"bunny\"}]"
 
       it "matches QueryParams route with missing key" do
-        conn <- makeRequest GET "/search-many?p&q=bunny"
+        conn <- makeRequest'' GET "/search-many?p&q=bunny"
         testStringBody conn `shouldEqual` "[{\"userId\":\"bunny\"}]"
 
       it "matches Raw route" do
-        conn <- makeRequest GET "/about"
+        conn <- makeRequest'' GET "/about"
         testHeaders conn `shouldEqual` [ Tuple "Content-Type" "text/plain" ]
         testStringBody conn `shouldEqual` "This is a test."
 
       it "checks HTTP method" do
-        conn <- makeRequest POST "/"
+        conn <- makeRequest'' POST "/"
         testStatus conn `shouldEqual` Just statusMethodNotAllowed
